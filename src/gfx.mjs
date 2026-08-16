@@ -6,6 +6,7 @@ export const SCREEN_H = 200;
 
 // PALETTE_DAT: 256 x 3 bytes of 6-bit VGA values.
 export function parsePalette(raw) {
+  if (raw.length < 768) throw new Error(`palette too small (${raw.length} bytes, need 768)`);
   const pal = new Array(256);
   for (let i = 0; i < 256; i++) pal[i] = [raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]];
   return pal; // 6-bit components (0-63)
@@ -63,6 +64,8 @@ export function parsePic(data) {
   if (w < 0 || h < 0 || w > 2048 || h > 2048)
     throw new Error(`implausible pic dimensions ${w}x${h}`);
   if (type === GTYPE_PIC) {
+    if (data.length < 20 + w * h)
+      throw new Error(`GPIC truncated: ${data.length} bytes for ${w}x${h}`);
     return { type, w, h, pixels: data.slice(20, 20 + w * h), mask: null };
   }
   if (type === GTYPE_SPRITE) {
@@ -76,6 +79,8 @@ export function parsePic(data) {
       const length = dv.getInt32(pos + 12, true);
       if (offset === -1) break;
       pos += 16;
+      if (length < 0 || pos + length > data.length)
+        throw new Error(`GSPRITE run truncated at byte ${pos}`);
       for (let j = 0; j < length; j++) {
         if (y >= 0 && y < h && x + j >= 0 && x + j < w) {
           pixels[y * w + x + j] = data[pos + j];
@@ -101,7 +106,11 @@ export function parseFont(data) {
   const width = new Uint8Array(256);
   for (let i = 0; i < 256; i++) charofs[i] = dv.getInt16(4 + i * 2, true);
   width.set(data.subarray(516, 772));
-  return { height, charofs, width, glyphs: data.subarray(FONT_HEADER) };
+  const glyphs = data.subarray(FONT_HEADER);
+  for (let i = 0; i < 256; i++)
+    if (charofs[i] !== -1 && charofs[i] + width[i] * height > glyphs.length)
+      throw new Error(`font glyph ${i} extends past end of data`);
+  return { height, charofs, width, glyphs };
 }
 
 export const FONT_SPACING = 1; // gfxapi.cpp fontspacing

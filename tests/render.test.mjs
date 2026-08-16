@@ -1,14 +1,26 @@
 // Renders every shipped window through the ported engine drawing code.
-// Framebuffer hashes are pinned for the known pristine v1.2 data so any
-// unintended rendering change fails the suite; with a custom RAPTOR_DIR the
-// hashes are only reported (different data, different pixels).
+// Framebuffer hashes are pinned whenever the loaded data IS the pristine
+// v1.2 SWD content (checked by fingerprint, not by where the path came
+// from); any other data gets the smoke assertions and reported hashes.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { parseSwd } from "../src/swd.mjs";
 import { RenderContext, drawWindow } from "../src/render.mjs";
-import { pristineDir, pristineIsCustom, loadSet } from "./helpers.mjs";
+import { pristineDir, loadSet } from "./helpers.mjs";
+
+// sha256(name+bytes of every SWD item)[0:16], pristine v1.2 full game
+const V12_FINGERPRINT = "da255cf36c873749";
+
+function swdFingerprint(glbs) {
+  const h = createHash("sha256");
+  for (const { item } of glbs.itemsMatching(/_SWD$/)) {
+    h.update(item.name);
+    h.update(item.data);
+  }
+  return h.digest("hex").slice(0, 16);
+}
 
 // sha256(framebuffer)[0:12] per window, pristine v1.2 full-game data
 const PINNED = {
@@ -35,7 +47,8 @@ const dir = pristineDir();
 test("all shipped windows render, pinned to known framebuffer hashes", { skip: !dir && "no game data found (set RAPTOR_DIR)" }, () => {
   const glbs = loadSet(dir);
   const ctx = new RenderContext(glbs);
-  const custom = pristineIsCustom();
+  const pristine = swdFingerprint(glbs) === V12_FINGERPRINT;
+  if (!pristine) console.log("data is not pristine v1.2 - hash pinning off, smoke checks only");
   let count = 0;
   for (const { item } of glbs.itemsMatching(/_SWD$/)) {
     const swd = parseSwd(item.data);
@@ -47,9 +60,9 @@ test("all shipped windows render, pinned to known framebuffer hashes", { skip: !
       assert.ok(colors.size > 2, `${item.name}: only ${colors.size} distinct colors`);
     const hash = createHash("sha256").update(r.buf).digest("hex").slice(0, 12);
     console.log(`${item.name.padEnd(16)} ${swd.fields.length.toString().padStart(2)} fields  ${colors.size.toString().padStart(3)} colors  ${hash}`);
-    if (!custom && PINNED[item.name])
+    if (pristine && PINNED[item.name])
       assert.equal(hash, PINNED[item.name], `${item.name}: rendering changed`);
     count++;
   }
-  if (!custom) assert.equal(count, 16);
+  if (pristine) assert.equal(count, 16);
 });

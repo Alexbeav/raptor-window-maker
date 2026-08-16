@@ -31,6 +31,18 @@ function name16(str) {
   return raw;
 }
 
+// Labels are stored as NUL-terminated single-byte ASCII; reject anything
+// that would serialize to different bytes than it parses back to.
+function checkLabel(str) {
+  if (!/^[\x20-\x7e]*$/.test(str))
+    throw new Error(`label must be printable ASCII: ${JSON.stringify(str)}`);
+}
+
+function checkIndex(swd, index) {
+  if (!Number.isInteger(index) || index < 0 || index >= swd.fields.length)
+    throw new Error(`no field ${index} (window has ${swd.fields.length})`);
+}
+
 function appendText(swd, str) {
   const bytes = enc.encode(str + "\0");
   const pos = swd.text.length;
@@ -59,6 +71,8 @@ export function setProps(rec, patch) {
 }
 
 export function setLabel(swd, index, label) {
+  checkIndex(swd, index);
+  checkLabel(label);
   const fld = swd.fields[index];
   const pos = appendText(swd, label);
   fld.txtoff = (textStart(swd) + pos) - (fldofs(swd) + index * SFIELD32_SIZE);
@@ -68,6 +82,13 @@ export function setLabel(swd, index, label) {
 // Clone an existing field (or pass a full record) and append it.
 // Returns the new field's index.
 export function addField(swd, { cloneFrom = null, name, label = "", ...overrides }) {
+  // validate everything BEFORE mutating, so a bad argument can't leave the
+  // window half-edited (txtoffs shifted, no field appended)
+  if (cloneFrom !== null) checkIndex(swd, cloneFrom);
+  checkLabel(label);
+  if (name !== undefined) name16(name);
+  for (const k of Object.keys(overrides)) if (NAME_KEYS.has(k)) name16(overrides[k]);
+
   for (const f of swd.fields) f.txtoff += SFIELD32_SIZE; // text moves away
   const src = cloneFrom !== null ? swd.fields[cloneFrom] : defaultButton();
   const fld = { ...src, nameRaw: src.nameRaw.slice(), item_nameRaw: src.item_nameRaw.slice(), font_nameRaw: src.font_nameRaw.slice() };
@@ -84,6 +105,7 @@ export function addField(swd, { cloneFrom = null, name, label = "", ...overrides
 }
 
 export function deleteField(swd, index) {
+  checkIndex(swd, index);
   swd.fields.splice(index, 1);
   // records at < index keep their position while the text area moves closer;
   // records after index shift down with the text area, staying relative

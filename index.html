@@ -94,32 +94,33 @@ async function loadFiles(files) {
   if (state.windows.some(w => w.dirty)
       && !confirm("You have unsaved edits. Loading files rebuilds the window list and discards them. Continue?"))
     return;
-  state.glbs ??= new GlbSet(); // repeated loads merge/replace by file number
-  let auto = 0;
-  for (const f of files) {
-    const m = f.name.match(/^file(\d{4})\.glb$/i);
-    const num = m ? parseInt(m[1], 10) : auto++;
-    try {
-      state.glbs.add(num, new Uint8Array(await f.arrayBuffer()));
-    } catch (e) {
-      status(`⚠ ${f.name}: ${e.message}`);
-      return;
-    }
-  }
+  // stage everything; commit to state only after the whole load succeeds,
+  // so a bad file can never leave windows attached to a half-replaced set
+  const glbs = new GlbSet();
+  if (state.glbs) // repeated loads merge/replace by file number
+    for (const num of state.glbs.nums()) glbs.files.set(num, state.glbs.files.get(num));
+  let auto = 0, ctx, windows = [];
   try {
-    state.ctx = new RenderContext(state.glbs);
+    for (const f of files) {
+      const m = f.name.match(/^file(\d{4})\.glb$/i);
+      const num = m ? parseInt(m[1], 10) : auto++;
+      glbs.add(num, new Uint8Array(await f.arrayBuffer()));
+    }
+    ctx = new RenderContext(glbs);
+    for (const { num, index, item } of glbs.itemsMatching(/_SWD$/)) {
+      try {
+        windows.push({ num, index, name: item.name, swd: parseSwd(item.data), dirty: false, undo: [] });
+      } catch (e) {
+        console.warn(`skipping ${item.name}: ${e.message}`);
+      }
+    }
   } catch (e) {
-    status(`⚠ ${e.message} — load FILE0000.GLB too.`);
+    status(`⚠ ${e.message}${/PALETTE_DAT/.test(e.message) ? " — load FILE0000.GLB too." : ""}`);
     return;
   }
-  state.windows = [];
-  for (const { num, index, item } of state.glbs.itemsMatching(/_SWD$/)) {
-    try {
-      state.windows.push({ num, index, name: item.name, swd: parseSwd(item.data), dirty: false, undo: [] });
-    } catch (e) {
-      console.warn(`skipping ${item.name}: ${e.message}`);
-    }
-  }
+  state.glbs = glbs;
+  state.ctx = ctx;
+  state.windows = windows;
   state.cur = state.windows.length ? 0 : -1;
   state.curFld = -1;
   $("dropHint").style.display = "none";
@@ -359,7 +360,18 @@ function refreshProps() {
     const t2 = document.createElement("h2"); t2.textContent = `Field ${state.curFld} (${f.typeName})`;
     box.append(t2);
     box.append(inputRow("type", f.opt, v => commitFld({ opt: +v }), { options: FIELD_TYPES }));
-    box.append(inputRow("label", f.textResolved ?? "", v => { snapshot(); setLabel(w.swd, state.curFld, v); markDirty(); }, { text: true }));
+    box.append(inputRow("label", f.textResolved ?? "", v => {
+      snapshot();
+      try {
+        setLabel(w.swd, state.curFld, v);
+      } catch (e) {
+        w.undo.pop();
+        status(`⚠ ${e.message}`);
+        refreshProps();
+        return;
+      }
+      markDirty();
+    }, { text: true }));
     box.append(inputRow("name", f.name, v => commitFld({ name: v }), { text: true }));
     box.append(inputRow("draw style", f.picflag, v => commitFld({ picflag: +v }), { options: DRAW_STYLES }));
     box.append(inputRow("art item", f.item_name, v => commitFld({ item_name: v }), { text: true, list: "picNames" }));
@@ -487,6 +499,16 @@ $("delFldBtn").onclick = () => {
 $("newWinBtn").onclick = () => {
   const name = prompt("Window item name (…_SWD, max 15 ASCII chars):", "CUSTOM_SWD");
   if (!name || !state.glbs) return;
+  // discovery is a case-sensitive /_SWD$/ match, and engine name lookup
+  // resolves the FIRST item with a name - enforce both up front
+  if (!/^[A-Z0-9_]{1,11}_SWD$/.test(name)) {
+    status(`⚠ name must be UPPERCASE, end in _SWD, max 15 chars: ${name}`);
+    return;
+  }
+  if (state.glbs.itemId(name) !== -1) {
+    status(`⚠ an item named ${name} already exists`);
+    return;
+  }
   const nums = state.glbs.nums();
   const num = nums.includes(1) ? 1 : nums[0];
   let swd;

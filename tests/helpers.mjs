@@ -22,12 +22,6 @@ export function pristineDir() {
   return firstExisting(process.env.RAPTOR_DIR, DEFAULT_PRISTINE);
 }
 
-// true when the pristine dir came from the environment, not the default -
-// pinned render hashes only apply to the known default data
-export function pristineIsCustom() {
-  return !!process.env.RAPTOR_DIR && existsSync(process.env.RAPTOR_DIR);
-}
-
 export function patchedDir() {
   return firstExisting(process.env.RAPTOR_PATCHED_DIR, DEFAULT_PATCHED);
 }

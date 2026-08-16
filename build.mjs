@@ -26,10 +26,12 @@ if (leftover) throw new Error(`unstripped import in bundle: ${leftover[0].trim()
 
 const out = html.replace(
   /<script type="module">([\s\S]*?)<\/script>/,
-  (_, app) => `<script type="module">\n${modules}\n${strip(app)}</script>`,
+  (_, app) => `<script type="module">\n${modules}\n// ==== app ====\n${strip(app)}</script>`,
 );
 if (out === html) throw new Error("app <script type=\"module\"> block not found");
 
-mkdirSync(join(ROOT, "dist"), { recursive: true });
-writeFileSync(join(ROOT, "dist", "raptor-window-maker.html"), out);
-console.log(`dist/raptor-window-maker.html (${(out.length / 1024).toFixed(0)} KB)`);
+// WM_DIST_DIR lets tests build into a writable temp dir
+const distDir = process.env.WM_DIST_DIR ?? join(ROOT, "dist");
+mkdirSync(distDir, { recursive: true });
+writeFileSync(join(distDir, "raptor-window-maker.html"), out);
+console.log(`${join(distDir, "raptor-window-maker.html")} (${(out.length / 1024).toFixed(0)} KB)`);
