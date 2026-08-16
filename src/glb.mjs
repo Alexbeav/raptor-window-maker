@@ -52,8 +52,8 @@ export function parseGlb(bytes) {
     const flags = dv.getUint32(0, true);
     const offset = dv.getUint32(4, true);
     const size = dv.getUint32(8, true);
-    if (offset + size > bytes.length)
-      throw new Error(`GLB item ${i} extends past end of file`);
+    if (offset < FAT_ENTRY * (count + 1) || offset + size > bytes.length)
+      throw new Error(`GLB item ${i} data outside payload area`);
     const nameRaw = e.slice(12, 28);
     let data = bytes.slice(offset, offset + size);
     if (flags & FLAG_ENCODED) data = decrypt(data);

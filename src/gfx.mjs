@@ -61,7 +61,7 @@ export function parsePic(data) {
   const type = dv.getInt32(0, true);
   const w = dv.getInt32(12, true);
   const h = dv.getInt32(16, true);
-  if (w < 0 || h < 0 || w > 2048 || h > 2048)
+  if (w < 1 || h < 1 || w > 2048 || h > 2048)
     throw new Error(`implausible pic dimensions ${w}x${h}`);
   if (type === GTYPE_PIC) {
     if (data.length < 20 + w * h)
@@ -72,12 +72,13 @@ export function parsePic(data) {
     const pixels = new Uint8Array(w * h);
     const mask = new Uint8Array(w * h);
     let pos = 20;
+    let terminated = false;
     while (pos + 16 <= data.length) {
       const x = dv.getInt32(pos, true);
       const y = dv.getInt32(pos + 4, true);
       const offset = dv.getInt32(pos + 8, true);
       const length = dv.getInt32(pos + 12, true);
-      if (offset === -1) break;
+      if (offset === -1) { terminated = true; break; }
       pos += 16;
       if (length < 0 || pos + length > data.length)
         throw new Error(`GSPRITE run truncated at byte ${pos}`);
@@ -89,6 +90,7 @@ export function parsePic(data) {
       }
       pos += length;
     }
+    if (!terminated) throw new Error("GSPRITE missing -1 terminator");
     return { type, w, h, pixels, mask };
   }
   throw new Error(`unknown GFX_TYPE ${type}`);
@@ -108,8 +110,8 @@ export function parseFont(data) {
   width.set(data.subarray(516, 772));
   const glyphs = data.subarray(FONT_HEADER);
   for (let i = 0; i < 256; i++)
-    if (charofs[i] !== -1 && charofs[i] + width[i] * height > glyphs.length)
-      throw new Error(`font glyph ${i} extends past end of data`);
+    if (charofs[i] !== -1 && (charofs[i] < 0 || charofs[i] + width[i] * height > glyphs.length))
+      throw new Error(`font glyph ${i} out of bounds (offset ${charofs[i]})`);
   return { height, charofs, width, glyphs };
 }
 

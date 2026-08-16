@@ -87,6 +87,7 @@ const state = {
   cur: -1, curFld: -1,
   zoom: 3,
   drag: null,
+  loadToken: 0,
 };
 
 // ---------- loading ----------
@@ -95,7 +96,9 @@ async function loadFiles(files) {
       && !confirm("You have unsaved edits. Loading files rebuilds the window list and discards them. Continue?"))
     return;
   // stage everything; commit to state only after the whole load succeeds,
-  // so a bad file can never leave windows attached to a half-replaced set
+  // so a bad file can never leave windows attached to a half-replaced set.
+  // The token makes overlapping loads last-writer-wins instead of racy.
+  const token = ++state.loadToken;
   const glbs = new GlbSet();
   if (state.glbs) // repeated loads merge/replace by file number
     for (const num of state.glbs.nums()) glbs.files.set(num, state.glbs.files.get(num));
@@ -118,6 +121,7 @@ async function loadFiles(files) {
     status(`⚠ ${e.message}${/PALETTE_DAT/.test(e.message) ? " — load FILE0000.GLB too." : ""}`);
     return;
   }
+  if (token !== state.loadToken) return; // a newer load superseded this one
   state.glbs = glbs;
   state.ctx = ctx;
   state.windows = windows;
@@ -239,8 +243,15 @@ function refreshExport() {
     const b = document.createElement("button");
     b.textContent = `Download FILE${String(num).padStart(4, "0")}.GLB`;
     b.onclick = () => {
-      for (const w of state.windows.filter(w => w.num === num))
-        state.glbs.files.get(num).items[w.index].data = serializeSwd(w.swd);
+      const items = state.glbs.files.get(num).items;
+      for (const w of state.windows.filter(w => w.num === num)) {
+        if (w.index === -1) { // new window: enters the archive on first export
+          items.push({ flags: 1, name: w.name, nameRaw: null, data: serializeSwd(w.swd) });
+          w.index = items.length - 1;
+        } else {
+          items[w.index].data = serializeSwd(w.swd);
+        }
+      }
       const blob = new Blob([state.glbs.build(num)], { type: "application/octet-stream" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
@@ -509,6 +520,10 @@ $("newWinBtn").onclick = () => {
     status(`⚠ an item named ${name} already exists`);
     return;
   }
+  if (state.windows.some(w => w.name === name)) {
+    status(`⚠ a window named ${name} already exists`);
+    return;
+  }
   const nums = state.glbs.nums();
   const num = nums.includes(1) ? 1 : nums[0];
   let swd;
@@ -518,9 +533,9 @@ $("newWinBtn").onclick = () => {
     status(`⚠ ${e.message}`);
     return;
   }
-  const file = state.glbs.files.get(num);
-  file.items.push({ flags: 1, name, nameRaw: null, data: serializeSwd(swd) });
-  state.windows.push({ num, index: file.items.length - 1, name, swd, dirty: true, undo: [] });
+  // index -1 = not yet in the archive; the item is only appended at export,
+  // so discarding unsaved work really discards it
+  state.windows.push({ num, index: -1, name, swd, dirty: true, undo: [] });
   state.cur = state.windows.length - 1;
   state.curFld = -1;
   refreshAll();

@@ -55,16 +55,36 @@ function appendText(swd, str) {
 
 const NAME_KEYS = new Set(["name", "item_name", "font_name"]);
 
+const HEADER_KEYS = new Set([
+  "version", "swdsize", "arrowflag", "display", "opt3", "opt4", "id", "type",
+  "name", "item_name", "item", "picflag", "lock", "fldofs", "txtofs",
+  "firstfld", "opt", "color", "numflds", "x", "y", "lx", "ly", "shadow",
+]);
+const FIELD_KEYS = new Set([
+  "opt", "id", "hotkey", "kbflag", "opt3", "opt4", "input_opt", "bstatus",
+  "name", "item_name", "item", "font_name", "fontid", "fontbasecolor",
+  "maxchars", "picflag", "color", "lite", "mark", "saveflag", "shadow",
+  "selectable", "x", "y", "lx", "ly", "txtoff", "placeholder",
+]);
+
 // Assign plain int members and/or the 16-byte name strings on a field or on
-// swd.header. Name strings also refresh the decoded convenience value.
+// swd.header. The whole patch is validated before anything is assigned, so
+// a bad value can never leave the record half-updated.
 export function setProps(rec, patch) {
+  const isField = "txtoff" in rec;
+  const allowed = isField ? FIELD_KEYS : HEADER_KEYS;
+  const staged = [];
   for (const [k, v] of Object.entries(patch)) {
-    if (NAME_KEYS.has(k)) {
-      rec[`${k}Raw`] = name16(v);
+    if (!allowed.has(k)) throw new Error(`unknown ${isField ? "field" : "window"} property: ${k}`);
+    staged.push(NAME_KEYS.has(k) ? [k, v, name16(v)] : [k, v | 0, null]);
+  }
+  for (const [k, v, raw] of staged) {
+    if (raw) {
+      rec[`${k}Raw`] = raw;
       rec[k] = v;
     } else {
-      rec[k] = v | 0;
-      if (k === "opt" && "typeName" in rec)
+      rec[k] = v;
+      if (k === "opt" && isField)
         rec.typeName = FIELD_TYPES[rec.opt] ?? `unknown(${rec.opt})`;
     }
   }
@@ -116,12 +136,15 @@ export function deleteField(swd, index) {
 
 // Rebuild the text area from the fields' current labels, dropping dead bytes.
 export function compactText(swd) {
-  const chunks = [];
-  let pos = 0;
+  // validate and lay out everything before touching the window
+  const labels = swd.fields.map(f => f.textResolved ?? "");
+  labels.forEach(checkLabel);
   const base = textStart(swd);
-  swd.fields.forEach((fld, i) => {
-    const label = fld.textResolved ?? "";
-    fld.txtoff = (base + pos) - (fldofs(swd) + i * SFIELD32_SIZE);
+  const chunks = [];
+  const offsets = [];
+  let pos = 0;
+  labels.forEach((label, i) => {
+    offsets.push((base + pos) - (fldofs(swd) + i * SFIELD32_SIZE));
     const bytes = enc.encode(label + "\0");
     chunks.push(bytes);
     pos += bytes.length;
@@ -129,6 +152,7 @@ export function compactText(swd) {
   const next = new Uint8Array(pos);
   let o = 0;
   for (const c of chunks) { next.set(c, o); o += c.length; }
+  swd.fields.forEach((fld, i) => { fld.txtoff = offsets[i]; });
   swd.text = next;
   swd.header.txtofs = base;
 }
