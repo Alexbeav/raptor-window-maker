@@ -24,7 +24,11 @@ with Delta Sector support).
   `gfxapi.cpp`: backgrounds (fill/texture/picture/see-thru), button bevels
   and shade tables, icons, game fonts, drop shadows — including the
   original's quirks (stale baked item ids are re-resolved by name, exactly
-  as the engine does at window init).
+  as the engine does at window init). One documented approximation: FLD_TEXT
+  fields that render a separate GLB text *item* (help screens) draw line by
+  line without the original's word-wrap or `TEXT_IMAGE` embeds — window
+  labels themselves are exact. Rendered framebuffer hashes for all 16
+  shipped windows are pinned in the test suite.
 - [x] **Phase 3 — editor** (`index.html`): drag/resize fields on the
   canvas, edit labels, types, hotkeys, colors (palette picker), fonts and
   art references; add/clone/delete fields; create windows; undo (Ctrl+Z);

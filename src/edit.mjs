@@ -23,8 +23,11 @@ function textStart(swd) {
 }
 
 function name16(str) {
+  // the format stores NUL-terminated ASCII in 16 bytes (15 usable)
+  if (!/^[\x20-\x7e]*$/.test(str)) throw new Error(`name must be ASCII: ${JSON.stringify(str)}`);
+  if (str.length > 15) throw new Error(`name too long (max 15 chars): ${str}`);
   const raw = new Uint8Array(16);
-  raw.set(enc.encode(str).subarray(0, 15));
+  raw.set(enc.encode(str));
   return raw;
 }
 
@@ -49,6 +52,8 @@ export function setProps(rec, patch) {
       rec[k] = v;
     } else {
       rec[k] = v | 0;
+      if (k === "opt" && "typeName" in rec)
+        rec.typeName = FIELD_TYPES[rec.opt] ?? `unknown(${rec.opt})`;
     }
   }
 }

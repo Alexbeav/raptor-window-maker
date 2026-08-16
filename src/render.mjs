@@ -83,9 +83,11 @@ function shadeButton(r, opt, x, y, lx, ly) {
   }
 }
 
-// SWD_FillText, simplified: renders a GLB text item into the field area with
-// line wrapping; TEXT_COLOR and TEXT_POS commands are honored, TEXT_IMAGE /
-// TEXT_RIGHT / TEXT_DOWN are skipped (their lines are consumed).
+// SWD_FillText, APPROXIMATE: renders a GLB text item into the field area one
+// source line at a time (the original word-wraps to the field width via
+// SWD_GetLine). TEXT_COLOR and TEXT_POS commands are honored; TEXT_IMAGE /
+// TEXT_RIGHT / TEXT_DOWN are consumed but not rendered. Only FLD_TEXT fields
+// that reference a text ITEM take this path - window labels are exact.
 function fillText(ctx, r, font, itemId, color, x, y, lx, ly) {
   const item = ctx.glbs.byId(itemId);
   if (!item || !font) return;
@@ -268,9 +270,12 @@ function showAllFields(ctx, r, swd) {
     if (fld.shadow) {
       if (fld.picflag !== SEE_THRU) {
         r.lightBox(UPPER_RIGHT, fx - 1, fy + 1, fld.lx, fld.ly);
-      } else if (fld.item !== -1) {
-        const pic = ctx.pic(itemId);
-        if (pic) r.shadeShape(DARK, pic, fx - 1, fy + 1);
+      } else {
+        const shadowItem = ctx.itemIdFor(fld);
+        if (shadowItem !== -1) {
+          const pic = ctx.pic(shadowItem);
+          if (pic) r.shadeShape(DARK, pic, fx - 1, fy + 1);
+        }
       }
     }
     putField(ctx, r, win, fld);

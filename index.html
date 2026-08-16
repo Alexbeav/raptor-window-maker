@@ -91,12 +91,20 @@ const state = {
 
 // ---------- loading ----------
 async function loadFiles(files) {
-  state.glbs ??= new GlbSet();
+  if (state.windows.some(w => w.dirty)
+      && !confirm("You have unsaved edits. Loading files rebuilds the window list and discards them. Continue?"))
+    return;
+  state.glbs ??= new GlbSet(); // repeated loads merge/replace by file number
   let auto = 0;
   for (const f of files) {
     const m = f.name.match(/^file(\d{4})\.glb$/i);
     const num = m ? parseInt(m[1], 10) : auto++;
-    state.glbs.add(num, new Uint8Array(await f.arrayBuffer()));
+    try {
+      state.glbs.add(num, new Uint8Array(await f.arrayBuffer()));
+    } catch (e) {
+      status(`⚠ ${f.name}: ${e.message}`);
+      return;
+    }
   }
   try {
     state.ctx = new RenderContext(state.glbs);
@@ -147,6 +155,7 @@ function markDirty() {
 }
 window.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return; // native undo
     const w = win();
     if (w && w.undo.length) {
       w.swd = parseSwd(w.undo.pop());
@@ -194,7 +203,13 @@ function refreshLists() {
   state.windows.forEach((w, i) => {
     const d = document.createElement("div");
     d.className = "winrow" + (i === state.cur ? " sel" : "");
-    d.innerHTML = `${w.name}${w.dirty ? ' <span class="dirty">●</span>' : ""}`;
+    d.append(document.createTextNode(w.name)); // archive-controlled: never innerHTML
+    if (w.dirty) {
+      const dot = document.createElement("span");
+      dot.className = "dirty";
+      dot.textContent = " ●";
+      d.append(dot);
+    }
     d.onclick = () => { state.cur = i; state.curFld = -1; refreshAll(); };
     $("winList").append(d);
   });
@@ -230,7 +245,7 @@ function refreshExport() {
       a.href = URL.createObjectURL(blob);
       a.download = `FILE${String(num).padStart(4, "0")}.GLB`;
       a.click();
-      URL.revokeObjectURL(a.href);
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000); // let the download start first
     };
     slot.append(b);
   }
@@ -307,8 +322,20 @@ function openPalette(ev, oncommit) {
 function closePalette() { document.getElementById("palPop")?.remove(); }
 window.addEventListener("mousedown", e => { if (!e.target.closest("#palPop") && !e.target.classList.contains("swatch")) closePalette(); });
 
-function commitWin(patch) { snapshot(); setProps(win().swd.header, patch); markDirty(); }
-function commitFld(patch) { snapshot(); setProps(win().swd.fields[state.curFld], patch); markDirty(); }
+function commit(target, patch) {
+  snapshot();
+  try {
+    setProps(target, patch);
+  } catch (e) {
+    win().undo.pop();
+    status(`⚠ ${e.message}`);
+    refreshProps(); // restore the rejected input's shown value
+    return;
+  }
+  markDirty();
+}
+function commitWin(patch) { commit(win().swd.header, patch); }
+function commitFld(patch) { commit(win().swd.fields[state.curFld], patch); }
 
 function refreshProps() {
   const box = $("props");
@@ -388,8 +415,8 @@ cv.addEventListener("mousedown", e => {
     const f = win().swd.fields[i];
     const fx = win().swd.header.x + f.x, fy = win().swd.header.y + f.y;
     const nearRight = mx >= fx + f.lx - 3, nearBottom = my >= fy + f.ly - 3;
-    snapshot();
-    state.drag = { i, mx, my, ox: f.x, oy: f.y, olx: f.lx, oly: f.ly, resize: nearRight || nearBottom, nearRight, nearBottom };
+    // snapshot lazily: only once the drag actually mutates something
+    state.drag = { i, mx, my, ox: f.x, oy: f.y, olx: f.lx, oly: f.ly, resize: nearRight || nearBottom, nearRight, nearBottom, preBytes: serializeSwd(win().swd), mutated: false };
   } else {
     state.drag = null;
   }
@@ -399,6 +426,13 @@ window.addEventListener("mousemove", e => {
   if (!state.drag) return;
   const [mx, my] = mousePos(e);
   const d = state.drag;
+  if (mx === d.mx && my === d.my && !d.mutated) return;
+  if (!d.mutated) {
+    const w = win();
+    w.undo.push(d.preBytes);
+    if (w.undo.length > 100) w.undo.shift();
+    d.mutated = true;
+  }
   const f = win().swd.fields[d.i];
   if (d.resize) {
     if (d.nearRight) f.lx = Math.max(2, d.olx + mx - d.mx);
@@ -420,6 +454,7 @@ window.addEventListener("keydown", e => {
   const f = w.swd.fields[state.curFld];
   const step = e.shiftKey ? 8 : 1;
   let moved = true;
+  if (!e.repeat && e.key.startsWith("Arrow")) snapshot(); // one undo entry per press-and-hold
   if (e.key === "ArrowLeft") f.x -= step;
   else if (e.key === "ArrowRight") f.x += step;
   else if (e.key === "ArrowUp") f.y -= step;
@@ -450,11 +485,17 @@ $("delFldBtn").onclick = () => {
   markDirty();
 };
 $("newWinBtn").onclick = () => {
-  const name = prompt("Window item name (…_SWD):", "CUSTOM_SWD");
+  const name = prompt("Window item name (…_SWD, max 15 ASCII chars):", "CUSTOM_SWD");
   if (!name || !state.glbs) return;
   const nums = state.glbs.nums();
   const num = nums.includes(1) ? 1 : nums[0];
-  const swd = newWindow({ name });
+  let swd;
+  try {
+    swd = newWindow({ name });
+  } catch (e) {
+    status(`⚠ ${e.message}`);
+    return;
+  }
   const file = state.glbs.files.get(num);
   file.items.push({ flags: 1, name, nameRaw: null, data: serializeSwd(swd) });
   state.windows.push({ num, index: file.items.length - 1, name, swd, dirty: true, undo: [] });

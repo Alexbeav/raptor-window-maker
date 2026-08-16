@@ -75,7 +75,7 @@ export function parseSwd(bytes) {
   if (bytes.length < SWIN_SIZE) throw new Error(`SWD too small: ${bytes.length}`);
   const header = readStruct(bytes, 0, SWIN_INTS, SWIN_NAMES);
   const { fldofs, numflds } = header;
-  if (fldofs < SWIN_SIZE || fldofs + numflds * SFIELD32_SIZE > bytes.length)
+  if (numflds < 0 || fldofs < SWIN_SIZE || fldofs + numflds * SFIELD32_SIZE > bytes.length)
     throw new Error(`bad field table: fldofs=${fldofs} numflds=${numflds} len=${bytes.length}`);
   const headerGap = bytes.slice(SWIN_SIZE, fldofs);
   const fields = [];
@@ -84,7 +84,9 @@ export function parseSwd(bytes) {
     const f = readStruct(bytes, base, SFIELD_INTS, SFIELD_NAMES);
     f.typeName = FIELD_TYPES[f.opt] ?? `unknown(${f.opt})`;
     const tp = base + f.txtoff;
-    f.textResolved = tp >= 0 && tp < bytes.length ? asciiz(bytes.subarray(tp)) : null;
+    // require the string to be NUL-terminated inside the resource
+    f.textResolved = tp >= 0 && tp < bytes.length && bytes.indexOf(0, tp) !== -1
+      ? asciiz(bytes.subarray(tp)) : null;
     fields.push(f);
   }
   const text = bytes.slice(fldofs + numflds * SFIELD32_SIZE);

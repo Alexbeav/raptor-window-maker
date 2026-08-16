@@ -55,10 +55,13 @@ export const GTYPE_SPRITE = 0;
 export const GTYPE_PIC = 1;
 
 export function parsePic(data) {
+  if (data.length < 20) throw new Error(`pic too small (${data.length} bytes)`);
   const dv = new DataView(data.buffer, data.byteOffset);
   const type = dv.getInt32(0, true);
   const w = dv.getInt32(12, true);
   const h = dv.getInt32(16, true);
+  if (w < 0 || h < 0 || w > 2048 || h > 2048)
+    throw new Error(`implausible pic dimensions ${w}x${h}`);
   if (type === GTYPE_PIC) {
     return { type, w, h, pixels: data.slice(20, 20 + w * h), mask: null };
   }
@@ -90,8 +93,10 @@ export function parsePic(data) {
 export const FONT_HEADER = 4 + 512 + 256;
 
 export function parseFont(data) {
+  if (data.length <= FONT_HEADER) throw new Error(`font too small (${data.length} bytes)`);
   const dv = new DataView(data.buffer, data.byteOffset);
   const height = dv.getInt32(0, true);
+  if (height < 1 || height > 64) throw new Error(`implausible font height ${height}`);
   const charofs = new Int16Array(256);
   const width = new Uint8Array(256);
   for (let i = 0; i < 256; i++) charofs[i] = dv.getInt16(4 + i * 2, true);

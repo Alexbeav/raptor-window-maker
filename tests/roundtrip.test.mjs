@@ -1,34 +1,25 @@
 // Byte-exact round-trip of every SWD window resource in the shipped game.
-//
-// Set RAPTOR_DIRS (";"-separated) to point at folders containing
-// FILE000n.GLB; defaults cover the local playtest copy (Delta-patched) and
-// the pristine Steam classic data. Directories that don't exist are skipped,
-// but at least one must yield SWD items.
+// Game-data location and skip behavior: see helpers.mjs.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseGlb } from "../src/glb.mjs";
-import { parseSwd, serializeSwd, FIELD_TYPES } from "../src/swd.mjs";
+import { parseSwd, serializeSwd } from "../src/swd.mjs";
+import { sweepDirs, glbNames } from "./helpers.mjs";
 
-const DEFAULT_DIRS = [
-  "I:\\Projects\\Raptor-Decomp\\playtest-s4",
-  "F:\\SteamLibrary\\steamapps\\common\\Raptor Call of the Shadows\\Raptor - Call of the Shadows",
-];
-const dirs = (process.env.RAPTOR_DIRS?.split(";") ?? DEFAULT_DIRS).filter(d => existsSync(d));
+const dirs = sweepDirs();
 
 function* swdItems(dir) {
-  const glbNames = readdirSync(dir).filter(n => /^file\d{4}\.glb$/i.test(n)).sort();
-  for (const glbName of glbNames) {
+  for (const glbName of glbNames(dir)) {
     const { items } = parseGlb(new Uint8Array(readFileSync(join(dir, glbName))));
     for (const item of items)
       if (item.name.endsWith("_SWD") && item.data.length) yield { glbName, item };
   }
 }
 
-test("every shipped SWD item round-trips byte-identically", () => {
-  assert.ok(dirs.length > 0, "no RAPTOR_DIRS directory exists on this machine");
+test("every shipped SWD item round-trips byte-identically", { skip: dirs.length === 0 && "no game data found (set RAPTOR_DIR)" }, () => {
   let total = 0;
   const typeCounts = {};
   for (const dir of dirs) {
@@ -58,7 +49,7 @@ test("every shipped SWD item round-trips byte-identically", () => {
   assert.ok(total >= 16, `suspiciously few SWD items (${total})`);
 });
 
-test("SHIPCOMP_SWD parses with known field counts", () => {
+test("SHIPCOMP_SWD parses with known field counts", { skip: dirs.length === 0 && "no game data found (set RAPTOR_DIR)" }, () => {
   for (const dir of dirs) {
     for (const { item } of swdItems(dir)) {
       if (item.name !== "SHIPCOMP_SWD") continue;
@@ -96,4 +87,15 @@ test("synthetic window survives parse/serialize without game data", () => {
   assert.equal(swd.fields[0].typeName, "button");
   assert.equal(swd.fields[0].textResolved, "HELLO");
   assert.deepEqual(Buffer.from(serializeSwd(swd)), Buffer.from(bytes));
+});
+
+test("malformed inputs are rejected, not crashed on", () => {
+  assert.throws(() => parseGlb(new Uint8Array(4)), /not a GLB/);
+  assert.throws(() => parseGlb(new Uint8Array(64)), /not a GLB|past end/);
+  assert.throws(() => parseSwd(new Uint8Array(10)), /too small/);
+  const neg = new Uint8Array(300);
+  const dv = new DataView(neg.buffer);
+  dv.setInt32(76, 120, true);
+  dv.setInt32(96, -5, true); // negative numflds
+  assert.throws(() => parseSwd(neg), /bad field table/);
 });

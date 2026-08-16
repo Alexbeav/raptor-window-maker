@@ -10,18 +10,19 @@ import { join } from "node:path";
 import { parseGlb } from "../src/glb.mjs";
 import { parseSwd, serializeSwd } from "../src/swd.mjs";
 import { setLabel, addField, deleteField, setProps, compactText, newWindow } from "../src/edit.mjs";
+import { pristineDir, patchedDir } from "./helpers.mjs";
 
-const PRISTINE = "F:\\SteamLibrary\\steamapps\\common\\Raptor Call of the Shadows\\Raptor - Call of the Shadows";
-const PATCHED = "I:\\Projects\\Raptor-Decomp\\playtest-s4";
+const PRISTINE = pristineDir();
+const PATCHED = patchedDir();
 
 function shipcomp(dir) {
   const { items } = parseGlb(new Uint8Array(readFileSync(join(dir, existsSync(join(dir, "FILE0001.GLB")) ? "FILE0001.GLB" : "file0001.glb"))));
   return items.find(it => it.name === "SHIPCOMP_SWD").data;
 }
 
-const haveData = existsSync(PRISTINE) && existsSync(PATCHED);
+const haveData = !!(PRISTINE && PATCHED);
 
-test("edit ops reproduce the Delta installer's SHIPCOMP patch byte-for-byte", { skip: !haveData }, () => {
+test("edit ops reproduce the Delta installer's SHIPCOMP patch byte-for-byte", { skip: !haveData && "needs RAPTOR_DIR (pristine) and RAPTOR_PATCHED_DIR (Delta-patched)" }, () => {
   const swd = parseSwd(shipcomp(PRISTINE));
   assert.equal(swd.fields.length, 12);
 
@@ -34,7 +35,7 @@ test("edit ops reproduce the Delta installer's SHIPCOMP patch byte-for-byte", { 
   assert.deepEqual(Buffer.from(serializeSwd(swd)), Buffer.from(expected));
 });
 
-test("setLabel repoints text and survives round-trip", { skip: !haveData }, () => {
+test("setLabel repoints text and survives round-trip", { skip: !haveData && "needs RAPTOR_DIR (pristine) and RAPTOR_PATCHED_DIR (Delta-patched)" }, () => {
   const swd = parseSwd(shipcomp(PRISTINE));
   setLabel(swd, 4, "ALPHA SECTOR");
   const re = parseSwd(serializeSwd(swd));
@@ -46,7 +47,7 @@ test("setLabel repoints text and survives round-trip", { skip: !haveData }, () =
   });
 });
 
-test("deleteField keeps remaining labels resolvable", { skip: !haveData }, () => {
+test("deleteField keeps remaining labels resolvable", { skip: !haveData && "needs RAPTOR_DIR (pristine) and RAPTOR_PATCHED_DIR (Delta-patched)" }, () => {
   const swd = parseSwd(shipcomp(PRISTINE));
   const labels = swd.fields.map(f => f.textResolved);
   deleteField(swd, 5);
@@ -56,7 +57,7 @@ test("deleteField keeps remaining labels resolvable", { skip: !haveData }, () =>
   assert.deepEqual(re.fields.map(f => f.textResolved), expect);
 });
 
-test("compactText drops dead bytes but keeps labels", { skip: !haveData }, () => {
+test("compactText drops dead bytes but keeps labels", { skip: !haveData && "needs RAPTOR_DIR (pristine) and RAPTOR_PATCHED_DIR (Delta-patched)" }, () => {
   const swd = parseSwd(shipcomp(PRISTINE));
   const labels = swd.fields.map(f => f.textResolved);
   setLabel(swd, 0, "X"); // leaves the old label as dead bytes

@@ -4,7 +4,10 @@
 // concatenation in dependency order.
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
+const ROOT = dirname(fileURLToPath(import.meta.url));
 const ORDER = ["src/glb.mjs", "src/swd.mjs", "src/gfx.mjs", "src/glbset.mjs", "src/render.mjs", "src/edit.mjs"];
 
 function strip(source) {
@@ -14,8 +17,12 @@ function strip(source) {
     .replace(/^export\s+/gm, "");
 }
 
-const modules = ORDER.map(p => `// ==== ${p} ====\n${strip(readFileSync(p, "utf8"))}`).join("\n");
-const html = readFileSync("index.html", "utf8");
+const modules = ORDER.map(p => `// ==== ${p} ====\n${strip(readFileSync(join(ROOT, p), "utf8"))}`).join("\n");
+const html = readFileSync(join(ROOT, "index.html"), "utf8");
+
+// import-stripping sanity: no import statements may survive into the bundle
+const leftover = modules.match(/^\s*import\b.*$/m);
+if (leftover) throw new Error(`unstripped import in bundle: ${leftover[0].trim()}`);
 
 const out = html.replace(
   /<script type="module">([\s\S]*?)<\/script>/,
@@ -23,6 +30,6 @@ const out = html.replace(
 );
 if (out === html) throw new Error("app <script type=\"module\"> block not found");
 
-mkdirSync("dist", { recursive: true });
-writeFileSync("dist/raptor-window-maker.html", out);
+mkdirSync(join(ROOT, "dist"), { recursive: true });
+writeFileSync(join(ROOT, "dist", "raptor-window-maker.html"), out);
 console.log(`dist/raptor-window-maker.html (${(out.length / 1024).toFixed(0)} KB)`);

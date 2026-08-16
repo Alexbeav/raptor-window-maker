@@ -1,31 +1,41 @@
 // Renders every shipped window through the ported engine drawing code.
-// Guards against crashes and blank output, and pins each window's rendered
-// framebuffer hash so unintended rendering changes show up as diffs.
+// Framebuffer hashes are pinned for the known pristine v1.2 data so any
+// unintended rendering change fails the suite; with a custom RAPTOR_DIR the
+// hashes are only reported (different data, different pixels).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { GlbSet } from "../src/glbset.mjs";
 import { parseSwd } from "../src/swd.mjs";
 import { RenderContext, drawWindow } from "../src/render.mjs";
+import { pristineDir, pristineIsCustom, loadSet } from "./helpers.mjs";
 
-const DIR = process.env.RAPTOR_DIR
-  ?? "F:\\SteamLibrary\\steamapps\\common\\Raptor Call of the Shadows\\Raptor - Call of the Shadows";
+// sha256(framebuffer)[0:12] per window, pristine v1.2 full-game data
+const PINNED = {
+  STORE_SWD: "09303549d89b",
+  MAIN_SWD: "b4bbbd94194a",
+  SHIPCOMP_SWD: "b101f3348103",
+  HANGAR_SWD: "620744b12cae",
+  ASK_SWD: "04cd117272cf",
+  LOCKER_SWD: "4f7988030a00",
+  REGISTER_SWD: "1271e5eb4bc4",
+  HELP_SWD: "5d86a14fd6bb",
+  LOAD_SWD: "bf2357916eb2",
+  MSG_SWD: "d03a7cf5f5cd",
+  ORDER_SWD: "680654fe88c6",
+  CREDIT_SWD: "d6ef0ec5663e",
+  ASKDIFF_SWD: "2ce77ece067e",
+  WINGAME_SWD: "68b051f37164",
+  OPTS_SWD: "5b3f01969a94",
+  LOADCOMP_SWD: "2a7ff85c38c0",
+};
 
-function loadSet(dir) {
-  const glbs = new GlbSet();
-  for (const n of readdirSync(dir)) {
-    const m = n.match(/^file(\d{4})\.glb$/i);
-    if (m) glbs.add(parseInt(m[1], 10), new Uint8Array(readFileSync(join(dir, n))));
-  }
-  return glbs;
-}
+const dir = pristineDir();
 
-test("all shipped windows render without errors and non-blank", { skip: !existsSync(DIR) }, () => {
-  const glbs = loadSet(DIR);
+test("all shipped windows render, pinned to known framebuffer hashes", { skip: !dir && "no game data found (set RAPTOR_DIR)" }, () => {
+  const glbs = loadSet(dir);
   const ctx = new RenderContext(glbs);
+  const custom = pristineIsCustom();
   let count = 0;
   for (const { item } of glbs.itemsMatching(/_SWD$/)) {
     const swd = parseSwd(item.data);
@@ -37,7 +47,9 @@ test("all shipped windows render without errors and non-blank", { skip: !existsS
       assert.ok(colors.size > 2, `${item.name}: only ${colors.size} distinct colors`);
     const hash = createHash("sha256").update(r.buf).digest("hex").slice(0, 12);
     console.log(`${item.name.padEnd(16)} ${swd.fields.length.toString().padStart(2)} fields  ${colors.size.toString().padStart(3)} colors  ${hash}`);
+    if (!custom && PINNED[item.name])
+      assert.equal(hash, PINNED[item.name], `${item.name}: rendering changed`);
     count++;
   }
-  assert.equal(count, 16);
+  if (!custom) assert.equal(count, 16);
 });
