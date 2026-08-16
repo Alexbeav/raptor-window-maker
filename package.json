@@ -1,0 +1,10 @@
+{
+  "name": "raptor-window-maker",
+  "version": "0.1.0",
+  "description": "Visual editor for Raptor: Call of the Shadows SWD window resources",
+  "type": "module",
+  "license": "GPL-2.0",
+  "scripts": {
+    "test": "node --test tests/roundtrip.test.mjs"
+  }
+}
