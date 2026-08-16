@@ -138,7 +138,7 @@ async function loadFiles(files) {
   status(`Loaded ${state.windows.length} windows from ${state.glbs.nums().length} GLB file(s).`);
 }
 
-$("openBtn").onclick = () => $("fileInput").click();
+$("openBtn").onclick = () => { $("fileInput").value = ""; $("fileInput").click(); };
 $("fileInput").onchange = e => loadFiles([...e.target.files]);
 document.body.addEventListener("dragover", e => e.preventDefault());
 document.body.addEventListener("drop", e => {
@@ -262,6 +262,10 @@ function refreshExport() {
       a.download = `FILE${String(num).padStart(4, "0")}.GLB`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000); // let the download start first
+      // the archive now holds the exported snapshot - these are saved
+      for (const w of state.windows.filter(w => w.num === num)) w.dirty = false;
+      refreshAll();
+      status(`Exported FILE${String(num).padStart(4, "0")}.GLB.`);
     };
     slot.append(b);
   }
