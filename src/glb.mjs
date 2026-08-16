@@ -33,7 +33,7 @@ export function encrypt(buf) {
   return out;
 }
 
-function asciiz(bytes) {
+export function asciiz(bytes) {
   const end = bytes.indexOf(0);
   return new TextDecoder("ascii").decode(end < 0 ? bytes : bytes.subarray(0, end));
 }

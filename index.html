@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Raptor Window Maker</title>
+<style>
+  :root { --bg:#15181d; --panel:#1d2128; --edge:#2c323c; --fg:#cdd3dd; --dim:#8a93a2; --acc:#e8a33d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 system-ui, sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:12px; padding:6px 12px; background:var(--panel); border-bottom:1px solid var(--edge); }
+  header h1 { font-size:14px; margin:0; color:var(--acc); }
+  header .spacer { flex:1; }
+  main { flex:1; display:flex; min-height:0; }
+  #sidebar { width:200px; background:var(--panel); border-right:1px solid var(--edge); overflow-y:auto; padding:8px; }
+  #sidebar h2, #props h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:10px 0 4px; }
+  .winrow, .fldrow { padding:3px 6px; border-radius:4px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .winrow:hover, .fldrow:hover { background:#262c36; }
+  .winrow.sel, .fldrow.sel { background:#33415c; color:#fff; }
+  .winrow .dirty { color:var(--acc); }
+  #center { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #canvasWrap { flex:1; overflow:auto; display:grid; place-items:center; background:#0d0f12; }
+  canvas { image-rendering: pixelated; }
+  #statusbar { padding:3px 12px; font-size:12px; color:var(--dim); background:var(--panel); border-top:1px solid var(--edge); min-height:22px; }
+  #props { width:270px; background:var(--panel); border-left:1px solid var(--edge); overflow-y:auto; padding:8px 10px; }
+  #props label { display:flex; align-items:center; justify-content:space-between; gap:6px; margin:3px 0; color:var(--dim); }
+  #props input[type=text], #props input[type=number], #props select {
+    width:140px; background:#12151a; color:var(--fg); border:1px solid var(--edge); border-radius:4px; padding:2px 5px; font:12px monospace; }
+  #props input[type=checkbox] { accent-color: var(--acc); }
+  button { background:#2a313d; color:var(--fg); border:1px solid var(--edge); border-radius:5px; padding:3px 10px; cursor:pointer; font-size:12px; }
+  button:hover { background:#333c4b; }
+  button.warn { color:#e88; }
+  .swatch { display:inline-block; width:16px; height:16px; border:1px solid #000; vertical-align:middle; cursor:pointer; border-radius:3px; }
+  #palPop { position:fixed; background:var(--panel); border:1px solid var(--edge); padding:6px; border-radius:6px; box-shadow:0 6px 24px #000a; z-index:10; }
+  #palPop canvas { image-rendering:pixelated; cursor:crosshair; }
+  #dropHint { padding:30px; text-align:center; color:var(--dim); }
+  #dropHint b { color:var(--fg); }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Raptor Window Maker</h1>
+  <input type="file" id="fileInput" multiple accept=".glb,.GLB" style="display:none">
+  <button id="openBtn">Open GLB files…</button>
+  <label style="color:var(--dim)">Zoom
+    <select id="zoomSel"><option>2</option><option selected>3</option><option>4</option></select>
+  </label>
+  <div class="spacer"></div>
+  <span id="exportSlot"></span>
+</header>
+<main>
+  <div id="sidebar">
+    <h2>Windows</h2>
+    <div id="winList"></div>
+    <div style="margin-top:6px"><button id="newWinBtn" disabled>New window…</button></div>
+    <h2>Fields</h2>
+    <div id="fldList"></div>
+    <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap">
+      <button id="addFldBtn" disabled>Add</button>
+      <button id="dupFldBtn" disabled>Clone</button>
+      <button id="delFldBtn" disabled class="warn">Delete</button>
+    </div>
+  </div>
+  <div id="center">
+    <div id="canvasWrap">
+      <div id="dropHint"><b>Drop your Raptor GLB files here</b><br>
+        (FILE0000.GLB … FILE0004.GLB — at minimum FILE0000 for the palette<br>
+        and FILE0001 for the windows, fonts and art)<br><br>
+        Everything runs locally; your files never leave this machine.</div>
+      <canvas id="view" style="display:none"></canvas>
+    </div>
+    <div id="statusbar">No files loaded.</div>
+  </div>
+  <div id="props"></div>
+</main>
+<script type="module">
+import { GlbSet } from "./src/glbset.mjs";
+import { parseSwd, serializeSwd, FIELD_TYPES, DRAW_STYLES } from "./src/swd.mjs";
+import { RenderContext, drawWindow } from "./src/render.mjs";
+import { setLabel, addField, deleteField, setProps, compactText, newWindow } from "./src/edit.mjs";
+import { SCREEN_W, SCREEN_H } from "./src/gfx.mjs";
+
+const $ = id => document.getElementById(id);
+const state = {
+  glbs: null, ctx: null,
+  windows: [],          // { num, index, name, swd, dirty, undo: [] }
+  cur: -1, curFld: -1,
+  zoom: 3,
+  drag: null,
+};
+
+// ---------- loading ----------
+async function loadFiles(files) {
+  state.glbs ??= new GlbSet();
+  let auto = 0;
+  for (const f of files) {
+    const m = f.name.match(/^file(\d{4})\.glb$/i);
+    const num = m ? parseInt(m[1], 10) : auto++;
+    state.glbs.add(num, new Uint8Array(await f.arrayBuffer()));
+  }
+  try {
+    state.ctx = new RenderContext(state.glbs);
+  } catch (e) {
+    status(`⚠ ${e.message} — load FILE0000.GLB too.`);
+    return;
+  }
+  state.windows = [];
+  for (const { num, index, item } of state.glbs.itemsMatching(/_SWD$/)) {
+    try {
+      state.windows.push({ num, index, name: item.name, swd: parseSwd(item.data), dirty: false, undo: [] });
+    } catch (e) {
+      console.warn(`skipping ${item.name}: ${e.message}`);
+    }
+  }
+  state.cur = state.windows.length ? 0 : -1;
+  state.curFld = -1;
+  $("dropHint").style.display = "none";
+  $("view").style.display = "";
+  $("newWinBtn").disabled = false;
+  refreshAll();
+  status(`Loaded ${state.windows.length} windows from ${state.glbs.nums().length} GLB file(s).`);
+}
+
+$("openBtn").onclick = () => $("fileInput").click();
+$("fileInput").onchange = e => loadFiles([...e.target.files]);
+document.body.addEventListener("dragover", e => e.preventDefault());
+document.body.addEventListener("drop", e => {
+  e.preventDefault();
+  const files = [...e.dataTransfer.files].filter(f => /\.glb$/i.test(f.name));
+  if (files.length) loadFiles(files);
+});
+
+function status(msg) { $("statusbar").textContent = msg; }
+const win = () => state.windows[state.cur] ?? null;
+
+// ---------- undo ----------
+function snapshot() {
+  const w = win();
+  if (!w) return;
+  w.undo.push(serializeSwd(w.swd));
+  if (w.undo.length > 100) w.undo.shift();
+}
+function markDirty() {
+  const w = win();
+  if (w) w.dirty = true;
+  refreshAll();
+}
+window.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+    const w = win();
+    if (w && w.undo.length) {
+      w.swd = parseSwd(w.undo.pop());
+      state.curFld = Math.min(state.curFld, w.swd.fields.length - 1);
+      w.dirty = true;
+      refreshAll();
+    }
+    e.preventDefault();
+  }
+});
+
+// ---------- rendering ----------
+const off = document.createElement("canvas");
+off.width = SCREEN_W; off.height = SCREEN_H;
+
+function render() {
+  const w = win();
+  const cv = $("view");
+  const z = state.zoom;
+  cv.width = SCREEN_W * z; cv.height = SCREEN_H * z;
+  const g = cv.getContext("2d");
+  g.imageSmoothingEnabled = false;
+  if (!w || !state.ctx) { g.fillStyle = "#000"; g.fillRect(0, 0, cv.width, cv.height); return; }
+  let raster;
+  try {
+    raster = drawWindow(state.ctx, w.swd);
+  } catch (e) {
+    status(`⚠ render error: ${e.message}`);
+    return;
+  }
+  off.getContext("2d").putImageData(new ImageData(raster.toRGBA(state.ctx.rgb), SCREEN_W, SCREEN_H), 0, 0);
+  g.drawImage(off, 0, 0, cv.width, cv.height);
+  // selection overlay
+  const f = w.swd.fields[state.curFld];
+  if (f) {
+    g.strokeStyle = "#ffd75e"; g.lineWidth = 1.5; g.setLineDash([4, 3]);
+    g.strokeRect((w.swd.header.x + f.x) * z - 1, (w.swd.header.y + f.y) * z - 1, f.lx * z + 2, f.ly * z + 2);
+    g.setLineDash([]);
+  }
+}
+
+// ---------- lists ----------
+function refreshLists() {
+  $("winList").innerHTML = "";
+  state.windows.forEach((w, i) => {
+    const d = document.createElement("div");
+    d.className = "winrow" + (i === state.cur ? " sel" : "");
+    d.innerHTML = `${w.name}${w.dirty ? ' <span class="dirty">●</span>' : ""}`;
+    d.onclick = () => { state.cur = i; state.curFld = -1; refreshAll(); };
+    $("winList").append(d);
+  });
+  $("fldList").innerHTML = "";
+  const w = win();
+  if (w) w.swd.fields.forEach((f, i) => {
+    const d = document.createElement("div");
+    d.className = "fldrow" + (i === state.curFld ? " sel" : "");
+    const label = f.textResolved ? ` “${f.textResolved}”` : "";
+    d.textContent = `${i}: ${f.typeName}${f.name ? " " + f.name : ""}${label}`;
+    d.onclick = () => { state.curFld = i; refreshAll(); };
+    $("fldList").append(d);
+  });
+  $("addFldBtn").disabled = !w;
+  $("dupFldBtn").disabled = !w || state.curFld < 0;
+  $("delFldBtn").disabled = !w || state.curFld < 0;
+  refreshExport();
+}
+
+function refreshExport() {
+  const slot = $("exportSlot");
+  slot.innerHTML = "";
+  if (!state.glbs) return;
+  const dirtyNums = [...new Set(state.windows.filter(w => w.dirty).map(w => w.num))];
+  for (const num of dirtyNums) {
+    const b = document.createElement("button");
+    b.textContent = `Download FILE${String(num).padStart(4, "0")}.GLB`;
+    b.onclick = () => {
+      for (const w of state.windows.filter(w => w.num === num))
+        state.glbs.files.get(num).items[w.index].data = serializeSwd(w.swd);
+      const blob = new Blob([state.glbs.build(num)], { type: "application/octet-stream" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `FILE${String(num).padStart(4, "0")}.GLB`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+    slot.append(b);
+  }
+}
+
+// ---------- property panels ----------
+const WIN_INTS = ["x", "y", "lx", "ly", "id", "type", "color", "firstfld", "opt"];
+const WIN_BOOLS = ["shadow", "arrowflag", "display", "lock"];
+const FLD_INTS = ["x", "y", "lx", "ly", "id", "hotkey", "maxchars", "fontbasecolor", "color", "lite", "input_opt", "bstatus"];
+const FLD_BOOLS = ["kbflag", "mark", "saveflag", "shadow", "selectable"];
+
+function inputRow(label, value, oncommit, opts = {}) {
+  const row = document.createElement("label");
+  row.textContent = label;
+  let el;
+  if (opts.options) {
+    el = document.createElement("select");
+    opts.options.forEach((name, i) => {
+      const o = document.createElement("option");
+      o.value = opts.values ? opts.values[i] : i; o.textContent = name;
+      el.append(o);
+    });
+    el.value = value;
+    el.onchange = () => oncommit(el.value);
+  } else if (opts.bool) {
+    el = document.createElement("input"); el.type = "checkbox"; el.checked = !!value;
+    el.onchange = () => oncommit(el.checked ? 1 : 0);
+  } else if (opts.text) {
+    el = document.createElement("input"); el.type = "text"; el.value = value;
+    if (opts.list) el.setAttribute("list", opts.list);
+    el.onchange = () => oncommit(el.value);
+  } else {
+    el = document.createElement("input"); el.type = "number"; el.value = value;
+    el.onchange = () => oncommit(parseInt(el.value, 10) || 0);
+  }
+  row.append(el);
+  return row;
+}
+
+function colorRow(label, value, oncommit) {
+  const row = inputRow(label, value, oncommit);
+  const sw = document.createElement("span");
+  sw.className = "swatch";
+  const [r, g, b] = state.ctx ? state.ctx.rgb[value & 0xff] : [0, 0, 0];
+  sw.style.background = `rgb(${r},${g},${b})`;
+  sw.onclick = e => openPalette(e, oncommit);
+  row.insertBefore(sw, row.lastChild);
+  return row;
+}
+
+function openPalette(ev, oncommit) {
+  closePalette();
+  const pop = document.createElement("div");
+  pop.id = "palPop";
+  const cv = document.createElement("canvas");
+  cv.width = 128; cv.height = 128; cv.style.width = "256px"; cv.style.height = "256px";
+  const g = cv.getContext("2d");
+  for (let i = 0; i < 256; i++) {
+    const [r, gg, b] = state.ctx.rgb[i];
+    g.fillStyle = `rgb(${r},${gg},${b})`;
+    g.fillRect((i % 16) * 8, (i >> 4) * 8, 8, 8);
+  }
+  cv.onclick = e => {
+    const r = cv.getBoundingClientRect();
+    const x = Math.floor((e.clientX - r.left) / 16), y = Math.floor((e.clientY - r.top) / 16);
+    oncommit(y * 16 + x);
+    closePalette();
+  };
+  pop.append(cv);
+  pop.style.left = Math.min(ev.clientX, innerWidth - 280) + "px";
+  pop.style.top = Math.min(ev.clientY, innerHeight - 280) + "px";
+  document.body.append(pop);
+}
+function closePalette() { document.getElementById("palPop")?.remove(); }
+window.addEventListener("mousedown", e => { if (!e.target.closest("#palPop") && !e.target.classList.contains("swatch")) closePalette(); });
+
+function commitWin(patch) { snapshot(); setProps(win().swd.header, patch); markDirty(); }
+function commitFld(patch) { snapshot(); setProps(win().swd.fields[state.curFld], patch); markDirty(); }
+
+function refreshProps() {
+  const box = $("props");
+  box.innerHTML = "";
+  const w = win();
+  if (!w) return;
+  const h = w.swd.header;
+
+  const t1 = document.createElement("h2"); t1.textContent = `Window ${w.name}`;
+  box.append(t1);
+  box.append(inputRow("name", h.name, v => commitWin({ name: v }), { text: true }));
+  box.append(inputRow("background", h.picflag, v => commitWin({ picflag: +v }), { options: DRAW_STYLES }));
+  box.append(inputRow("art item", h.item_name, v => commitWin({ item_name: v }), { text: true, list: "picNames" }));
+  for (const k of WIN_INTS.slice(0, 4)) box.append(inputRow(k, h[k], v => commitWin({ [k]: v })));
+  box.append(colorRow("color", h.color, v => commitWin({ color: v })));
+  for (const k of WIN_INTS.slice(4)) if (k !== "color") box.append(inputRow(k, h[k], v => commitWin({ [k]: v })));
+  for (const k of WIN_BOOLS) box.append(inputRow(k, h[k], v => commitWin({ [k]: v }), { bool: true }));
+
+  const f = w.swd.fields[state.curFld];
+  if (f) {
+    const t2 = document.createElement("h2"); t2.textContent = `Field ${state.curFld} (${f.typeName})`;
+    box.append(t2);
+    box.append(inputRow("type", f.opt, v => commitFld({ opt: +v }), { options: FIELD_TYPES }));
+    box.append(inputRow("label", f.textResolved ?? "", v => { snapshot(); setLabel(w.swd, state.curFld, v); markDirty(); }, { text: true }));
+    box.append(inputRow("name", f.name, v => commitFld({ name: v }), { text: true }));
+    box.append(inputRow("draw style", f.picflag, v => commitFld({ picflag: +v }), { options: DRAW_STYLES }));
+    box.append(inputRow("art item", f.item_name, v => commitFld({ item_name: v }), { text: true, list: "picNames" }));
+    box.append(inputRow("font", f.font_name, v => commitFld({ font_name: v }), { text: true, list: "fontNames" }));
+    for (const k of FLD_INTS) {
+      if (k === "fontbasecolor" || k === "color" || k === "lite") box.append(colorRow(k, f[k], v => commitFld({ [k]: v })));
+      else box.append(inputRow(k, f[k], v => commitFld({ [k]: v })));
+    }
+    for (const k of FLD_BOOLS) box.append(inputRow(k, f[k], v => commitFld({ [k]: v }), { bool: true }));
+  }
+
+  const util = document.createElement("div");
+  util.style.marginTop = "12px";
+  const compact = document.createElement("button");
+  compact.textContent = "Compact text area";
+  compact.onclick = () => { snapshot(); compactText(w.swd); markDirty(); };
+  util.append(compact);
+  box.append(util);
+
+  // datalists for art / font names
+  for (const [id, re] of [["picNames", /_(PIC|BLK)$/], ["fontNames", /_FNT$/]]) {
+    let dl = document.getElementById(id);
+    if (!dl) { dl = document.createElement("datalist"); dl.id = id; document.body.append(dl); }
+    dl.innerHTML = "";
+    if (state.glbs)
+      for (const { item } of state.glbs.itemsMatching(re)) {
+        const o = document.createElement("option"); o.value = item.name; dl.append(o);
+      }
+  }
+}
+
+// ---------- canvas interaction ----------
+const cv = $("view");
+function hitField(mx, my) {
+  const w = win();
+  if (!w) return -1;
+  for (let i = w.swd.fields.length - 1; i >= 0; i--) {
+    const f = w.swd.fields[i];
+    const fx = w.swd.header.x + f.x, fy = w.swd.header.y + f.y;
+    if (mx >= fx && mx < fx + f.lx && my >= fy && my < fy + f.ly) return i;
+  }
+  return -1;
+}
+function mousePos(e) {
+  const r = cv.getBoundingClientRect();
+  return [Math.floor((e.clientX - r.left) / state.zoom), Math.floor((e.clientY - r.top) / state.zoom)];
+}
+cv.addEventListener("mousedown", e => {
+  const [mx, my] = mousePos(e);
+  const i = hitField(mx, my);
+  state.curFld = i;
+  if (i >= 0) {
+    const f = win().swd.fields[i];
+    const fx = win().swd.header.x + f.x, fy = win().swd.header.y + f.y;
+    const nearRight = mx >= fx + f.lx - 3, nearBottom = my >= fy + f.ly - 3;
+    snapshot();
+    state.drag = { i, mx, my, ox: f.x, oy: f.y, olx: f.lx, oly: f.ly, resize: nearRight || nearBottom, nearRight, nearBottom };
+  } else {
+    state.drag = null;
+  }
+  refreshAll();
+});
+window.addEventListener("mousemove", e => {
+  if (!state.drag) return;
+  const [mx, my] = mousePos(e);
+  const d = state.drag;
+  const f = win().swd.fields[d.i];
+  if (d.resize) {
+    if (d.nearRight) f.lx = Math.max(2, d.olx + mx - d.mx);
+    if (d.nearBottom) f.ly = Math.max(2, d.oly + my - d.my);
+  } else {
+    f.x = d.ox + mx - d.mx;
+    f.y = d.oy + my - d.my;
+  }
+  win().dirty = true;
+  render();
+  status(`${f.name || f.typeName}: x=${f.x} y=${f.y} ${f.lx}×${f.ly}`);
+});
+window.addEventListener("mouseup", () => {
+  if (state.drag) { state.drag = null; refreshAll(); }
+});
+window.addEventListener("keydown", e => {
+  const w = win();
+  if (!w || state.curFld < 0 || e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  const f = w.swd.fields[state.curFld];
+  const step = e.shiftKey ? 8 : 1;
+  let moved = true;
+  if (e.key === "ArrowLeft") f.x -= step;
+  else if (e.key === "ArrowRight") f.x += step;
+  else if (e.key === "ArrowUp") f.y -= step;
+  else if (e.key === "ArrowDown") f.y += step;
+  else moved = false;
+  if (moved) { w.dirty = true; refreshAll(); e.preventDefault(); }
+});
+
+// ---------- field / window commands ----------
+$("addFldBtn").onclick = () => {
+  const w = win();
+  snapshot();
+  state.curFld = addField(w.swd, { name: "NEWFIELD", label: "NEW" });
+  markDirty();
+};
+$("dupFldBtn").onclick = () => {
+  const w = win();
+  snapshot();
+  const src = w.swd.fields[state.curFld];
+  state.curFld = addField(w.swd, { cloneFrom: state.curFld, name: src.name, label: src.textResolved ?? "", y: src.y + src.ly + 2 });
+  markDirty();
+};
+$("delFldBtn").onclick = () => {
+  const w = win();
+  snapshot();
+  deleteField(w.swd, state.curFld);
+  state.curFld = -1;
+  markDirty();
+};
+$("newWinBtn").onclick = () => {
+  const name = prompt("Window item name (…_SWD):", "CUSTOM_SWD");
+  if (!name || !state.glbs) return;
+  const nums = state.glbs.nums();
+  const num = nums.includes(1) ? 1 : nums[0];
+  const swd = newWindow({ name });
+  const file = state.glbs.files.get(num);
+  file.items.push({ flags: 1, name, nameRaw: null, data: serializeSwd(swd) });
+  state.windows.push({ num, index: file.items.length - 1, name, swd, dirty: true, undo: [] });
+  state.cur = state.windows.length - 1;
+  state.curFld = -1;
+  refreshAll();
+};
+
+$("zoomSel").onchange = e => { state.zoom = +e.target.value; render(); };
+
+function refreshAll() { refreshLists(); refreshProps(); render(); }
+</script>
+</body>
+</html>

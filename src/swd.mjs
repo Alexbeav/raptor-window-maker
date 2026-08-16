@@ -14,6 +14,8 @@
 // serializeSwd(parseSwd(b)) is byte-identical - the round-trip suite enforces
 // this over every *_SWD item in the shipped game.
 
+import { asciiz } from "./glb.mjs";
+
 export const SWIN_SIZE = 120;
 export const SFIELD32_SIZE = 148;
 
@@ -45,11 +47,6 @@ const SFIELD_INTS = [
   ["shadow", 116], ["selectable", 120], ["x", 124], ["y", 128],
   ["lx", 132], ["ly", 136], ["txtoff", 140], ["placeholder", 144],
 ];
-
-function asciiz(bytes) {
-  const end = bytes.indexOf(0);
-  return new TextDecoder("ascii").decode(end < 0 ? bytes : bytes.subarray(0, end));
-}
 
 function readStruct(bytes, base, ints, names) {
   const dv = new DataView(bytes.buffer, bytes.byteOffset + base);

@@ -5,6 +5,7 @@
   "type": "module",
   "license": "GPL-2.0",
   "scripts": {
-    "test": "node --test tests/roundtrip.test.mjs"
+    "test": "node --test tests/roundtrip.test.mjs tests/render.test.mjs tests/edit.test.mjs",
+    "build": "node build.mjs"
   }
 }

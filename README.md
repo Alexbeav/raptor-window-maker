@@ -19,24 +19,36 @@ with Delta Sector support).
 - [x] **Phase 1 — format**: GLB container + SWD parser/serializer
   (`src/glb.mjs`, `src/swd.mjs`), validated by byte-exact round-trip of all
   16 shipped windows (148 fields) in two independent game copies.
-- [ ] **Phase 2 — viewer**: pixel-faithful canvas rendering of windows
-  (backgrounds, button chrome, icons, game fonts from the GLBs), ported from
-  the engine's `swdapi.cpp` drawing code.
-- [ ] **Phase 3 — editor**: drag/resize fields, edit labels, hotkeys,
-  colors, fonts and art references; add/clone/delete fields; create windows;
-  export a patched GLB (same flow as the map editor).
+- [x] **Phase 2 — viewer**: pixel-faithful canvas rendering
+  (`src/gfx.mjs`, `src/render.mjs`) ported from the engine's `swdapi.cpp` /
+  `gfxapi.cpp`: backgrounds (fill/texture/picture/see-thru), button bevels
+  and shade tables, icons, game fonts, drop shadows — including the
+  original's quirks (stale baked item ids are re-resolved by name, exactly
+  as the engine does at window init).
+- [x] **Phase 3 — editor** (`index.html`): drag/resize fields on the
+  canvas, edit labels, types, hotkeys, colors (palette picker), fonts and
+  art references; add/clone/delete fields; create windows; undo (Ctrl+Z);
+  export the patched `FILE000n.GLB`. Edit operations are validated by
+  reproducing the Delta Sector installer's `SHIPCOMP_SWD` binary patch
+  **byte-for-byte** from high-level ops (`tests/edit.test.mjs`).
+
+## Using it
+
+Serve the repo root (any static server, e.g. `python -m http.server`) and
+open `index.html`, or build the dependency-free single file:
+
+```
+node build.mjs        # -> dist/raptor-window-maker.html (works from file://)
+```
+
+Drop your `FILE0000.GLB`–`FILE0004.GLB` into the page (FILE0000 supplies
+the palette, FILE0001 the windows/fonts/art). Everything runs locally.
 
 ## Development
 
-No dependencies. Run the tests with:
-
-```
-node --test tests/roundtrip.test.mjs
-```
-
-The round-trip suite needs a Raptor install; point `RAPTOR_DIRS` at one or
-more folders containing `FILE000n.GLB` (semicolon-separated). No game data
-is included in or distributed with this repository.
+No dependencies. Run the tests with `npm test`. The suites that need game
+data read a Raptor install from `RAPTOR_DIRS` / `RAPTOR_DIR` and skip if
+absent. No game data is included in or distributed with this repository.
 
 ## License
 
