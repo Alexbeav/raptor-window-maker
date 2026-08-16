@@ -122,6 +122,10 @@ async function loadFiles(files) {
     return;
   }
   if (token !== state.loadToken) return; // a newer load superseded this one
+  // edits made while the file reads were pending get their own confirm
+  if (state.windows.some(w => w.dirty)
+      && !confirm("Edits were made while files were loading; committing the load discards them. Continue?"))
+    return;
   state.glbs = glbs;
   state.ctx = ctx;
   state.windows = windows;

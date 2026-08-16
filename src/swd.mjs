@@ -84,9 +84,11 @@ export function parseSwd(bytes) {
     const f = readStruct(bytes, base, SFIELD_INTS, SFIELD_NAMES);
     f.typeName = FIELD_TYPES[f.opt] ?? `unknown(${f.opt})`;
     const tp = base + f.txtoff;
-    // require the string to be NUL-terminated inside the resource
-    f.textResolved = tp >= 0 && tp < bytes.length && bytes.indexOf(0, tp) !== -1
-      ? asciiz(bytes.subarray(tp)) : null;
+    // label pointers must land inside the text area and be NUL-terminated
+    const textArea = fldofs + numflds * SFIELD32_SIZE;
+    if (tp < textArea || tp >= bytes.length || bytes.indexOf(0, tp) === -1)
+      throw new Error(`field ${i}: label pointer ${f.txtoff} outside text area`);
+    f.textResolved = asciiz(bytes.subarray(tp));
     fields.push(f);
   }
   const text = bytes.slice(fldofs + numflds * SFIELD32_SIZE);

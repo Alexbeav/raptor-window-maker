@@ -102,26 +102,26 @@ export function setLabel(swd, index, label) {
 // Clone an existing field (or pass a full record) and append it.
 // Returns the new field's index.
 export function addField(swd, { cloneFrom = null, name, label = "", ...overrides }) {
-  // validate everything BEFORE mutating, so a bad argument can't leave the
-  // window half-edited (txtoffs shifted, no field appended)
+  // build and fully validate the new field while it is DETACHED, so no
+  // throw can leave the window half-edited (txtoffs shifted, field pushed)
   if (cloneFrom !== null) checkIndex(swd, cloneFrom);
   checkLabel(label);
-  if (name !== undefined) name16(name);
-  for (const k of Object.keys(overrides)) if (NAME_KEYS.has(k)) name16(overrides[k]);
-
-  for (const f of swd.fields) f.txtoff += SFIELD32_SIZE; // text moves away
   const src = cloneFrom !== null ? swd.fields[cloneFrom] : defaultButton();
   const fld = { ...src, nameRaw: src.nameRaw.slice(), item_nameRaw: src.item_nameRaw.slice(), font_nameRaw: src.font_nameRaw.slice() };
   if (name !== undefined) setProps(fld, { name });
-  swd.fields.push(fld);
-  const index = swd.fields.length - 1;
-  const pos = appendText(swd, label);
-  fld.txtoff = (textStart(swd) + pos) - (fldofs(swd) + index * SFIELD32_SIZE);
+  // the appended field's record sits 148 bytes before the moved text area,
+  // and its label lands at the current end of the text
+  fld.txtoff = SFIELD32_SIZE + swd.text.length;
   fld.textResolved = label;
-  setProps(fld, overrides);
+  setProps(fld, overrides); // may throw - only the detached clone is touched
+
+  // commit
+  for (const f of swd.fields) f.txtoff += SFIELD32_SIZE; // text moves away
+  swd.fields.push(fld);
+  appendText(swd, label);
   swd.header.numflds = swd.fields.length;
   swd.header.txtofs = textStart(swd);
-  return index;
+  return swd.fields.length - 1;
 }
 
 export function deleteField(swd, index) {
